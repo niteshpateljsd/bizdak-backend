@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model City {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  country   String
+  lat       Float
+  lng       Float
+  createdAt DateTime @default(now())
+
+  stores           Store[]
+  deals            Deal[]
+  campaigns        Campaign[] @relation("CampaignStoreCity")
+  targetCampaigns  Campaign[] @relation("CampaignTargetCity")
+
+  @@map("cities")
+}
+
+model Tag {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique
+  parentId  String?  // null = top-level tag · set = sub-tag of parentId
+  createdAt DateTime @default(now())
+
+  parent    Tag?     @relation("TagChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Tag[]    @relation("TagChildren")
+  deals     DealTag[]
+
+  @@map("tags")
+}
+
+model Store {
+  id            String   @id @default(uuid())
+  name          String
+  nameFr        String?  // French name (falls back to name if null)
+  description   String?
+  descriptionFr String?  // French description
+  address       String
+  lat           Float
+  lng           Float
+  phone         String?
+  website       String?
+  imageUrl      String?
+  videoUrl      String?
+  videoDuration Int?
+  cityId        String
+  viewCount     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  city      City       @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  deals     Deal[]
+  campaigns Campaign[]
+
+  @@map("stores")
+}
+
+model Deal {
+  id              String    @id @default(uuid())
+  title           String
+  titleFr         String?   // French title (falls back to title if null)
+  description     String
+  descriptionFr   String?   // French description
+  imageUrl        String?
+  videoUrl        String?
+  videoDuration   Int?
+  originalPrice   Float?
+  discountedPrice Float?
+  discountPercent Int?
+  startDate       DateTime
+  endDate         DateTime
+  cityId          String
+  storeId         String
+  viewCount       Int       @default(0)
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  city      City          @relation(fields: [cityId], references: [id], onDelete: Cascade)
+  store     Store         @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  tags      DealTag[]
+  campaigns CampaignDeal[]
+
+  @@map("deals")
+}
+
+model DealTag {
+  dealId String
+  tagId  String
+
+  deal   Deal   @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([dealId, tagId])
+  @@map("deal_tags")
+}
+
+model Campaign {
+  id            String        @id @default(uuid())
+  title         String
+  body          String
+  type          CampaignType
+  cityId        String        // store's city
+  targetCityId  String?       // audience city — for CROSS_CITY (e.g. Mbour store → Dakar audience)
+  storeId       String?
+  tagSlug       String?
+  fcmTopic      String        // derived from targetCityId when set, else cityId
+  sentAt        DateTime?
+  createdAt     DateTime      @default(now())
+
+  city          City          @relation("CampaignStoreCity",  fields: [cityId],       references: [id], onDelete: Cascade)
+  targetCity    City?         @relation("CampaignTargetCity", fields: [targetCityId], references: [id], onDelete: SetNull)
+  store         Store?        @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  deals         CampaignDeal[]
+
+  @@map("campaigns")
+}
+
+model CampaignDeal {
+  campaignId String
+  dealId     String
+
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  deal       Deal     @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  @@id([campaignId, dealId])
+  @@map("campaign_deals")
+}
+
+enum CampaignType {
+  CITY_WIDE
+  INTEREST_BASED
+  STORE_SPECIFIC
+  CROSS_CITY
+}
+
+// ── Anonymous analytics events ────────────────────────────────
+// No user identity. No location. No PII.
+// deviceId is a random UUID generated on first app install —
+// uninstalling resets it. Never linked to any person.
+
+model Event {
+  id              String   @id @default(uuid())
+  type            String   // app_open | deal_view | store_view | geofence_trigger
+                           // notification_tap | video_play | city_switch | search
+                           // confirmed_visit
+  citySlug        String?
+  dealId          String?
+  storeId         String?
+  campaignId      String?
+  deviceId        String?
+  durationSeconds Int?     // for confirmed_visit — seconds inside the store
+  hourOfDay       Int?     // for confirmed_visit — 0-23 local hour of entry
+  timestamp       DateTime @default(now())
+
+  @@index([type, timestamp])
+  @@index([citySlug, timestamp])
+  @@index([storeId, type, timestamp])
+  @@index([deviceId])
+  @@map("events")
+}
+
+enum EventType {
+  app_open
+  deal_view
+  store_view
+  geofence_trigger
+  notification_tap
+  video_play
+  city_switch
+  search
+}
