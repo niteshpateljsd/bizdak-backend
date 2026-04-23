@@ -15,12 +15,13 @@ model City {
   lat       Float
   lng       Float
   createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @default(now())
 
   stores           Store[]
   deals            Deal[]
   campaigns        Campaign[] @relation("CampaignStoreCity")
   targetCampaigns  Campaign[] @relation("CampaignTargetCity")
+  
 
   @@map("cities")
 }
