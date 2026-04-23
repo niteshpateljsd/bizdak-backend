@@ -3,21 +3,23 @@ const { authenticate } = require('../middleware/auth.middleware');
 const { uploadImage, uploadVideo } = require('../utils/cloudinary');
 const { uploadImage: handleImage, uploadVideoFile: handleVideo } = require('../controllers/upload.controller');
 
+const ALLOWED_TYPES = ['deal', 'store'];
+
 function setFolder(req, res, next) {
-  req.uploadFolder = req.query.type === 'deal'
-    ? 'bizdak/deals'
-    : req.query.type === 'store'
-      ? 'bizdak/stores'
-      : 'bizdak';
+  const type = req.query.type;
+  if (type && !ALLOWED_TYPES.includes(type)) {
+    return res.status(422).json({ error: "?type must be 'deal' or 'store'" });
+  }
+  req.uploadFolder = type === 'deal' ? 'bizdak/deals' : type === 'store' ? 'bizdak/stores' : 'bizdak';
   next();
 }
 
 function setVideoFolder(req, res, next) {
-  req.uploadFolder = req.query.type === 'deal'
-    ? 'bizdak/videos/deals'
-    : req.query.type === 'store'
-      ? 'bizdak/videos/stores'
-      : 'bizdak/videos';
+  const type = req.query.type;
+  if (type && !ALLOWED_TYPES.includes(type)) {
+    return res.status(422).json({ error: "?type must be 'deal' or 'store'" });
+  }
+  req.uploadFolder = type === 'deal' ? 'bizdak/videos/deals' : type === 'store' ? 'bizdak/videos/stores' : 'bizdak/videos';
   next();
 }
 

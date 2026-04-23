@@ -15,6 +15,7 @@ model City {
   lat       Float
   lng       Float
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   stores           Store[]
   deals            Deal[]
@@ -50,8 +51,8 @@ model Store {
   phone         String?
   website       String?
   imageUrl      String?
-  videoUrl      String?
-  videoDuration Int?
+  videoUrl           String?
+  videoThumbnailUrl  String?  // poster frame for video player
   cityId        String
   viewCount     Int      @default(0)
   createdAt     DateTime @default(now())
@@ -61,6 +62,8 @@ model Store {
   deals     Deal[]
   campaigns Campaign[]
 
+  @@index([cityId])
+  @@index([cityId, name])
   @@map("stores")
 }
 
@@ -71,15 +74,17 @@ model Deal {
   description     String
   descriptionFr   String?   // French description
   imageUrl        String?
-  videoUrl        String?
-  videoDuration   Int?
+  videoUrl           String?
+  videoThumbnailUrl  String?  // poster frame for video player
+  videoDuration      Int?
   originalPrice   Float?
   discountedPrice Float?
   discountPercent Int?
-  startDate       DateTime
-  endDate         DateTime
+  startDate       DateTime?  // null = starts immediately
+  endDate         DateTime?  // null = open-ended deal (no expiry)
   cityId          String
   storeId         String
+  groupId         String?   // shared UUID for deals created together via bulk create
   viewCount       Int       @default(0)
   isActive        Boolean   @default(true)
   createdAt       DateTime  @default(now())
@@ -90,6 +95,12 @@ model Deal {
   tags      DealTag[]
   campaigns CampaignDeal[]
 
+  @@index([cityId])
+  @@index([storeId])
+  @@index([isActive, cityId])
+  @@index([createdAt])
+  @@index([groupId])  // fast lookup of all deals in the same bulk group
+  @@index([isActive, endDate])  // speeds up nightly expiry: isActive=true AND endDate < now
   @@map("deals")
 }
 
@@ -113,15 +124,19 @@ model Campaign {
   targetCityId  String?       // audience city — for CROSS_CITY (e.g. Mbour store → Dakar audience)
   storeId       String?
   tagSlug       String?
+  imageUrl      String?       // optional image shown in push notification (Cloudinary URL)
   fcmTopic      String        // derived from targetCityId when set, else cityId
   sentAt        DateTime?
   createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   city          City          @relation("CampaignStoreCity",  fields: [cityId],       references: [id], onDelete: Cascade)
   targetCity    City?         @relation("CampaignTargetCity", fields: [targetCityId], references: [id], onDelete: SetNull)
   store         Store?        @relation(fields: [storeId], references: [id], onDelete: SetNull)
   deals         CampaignDeal[]
 
+  @@index([cityId])
+  @@index([sentAt])
   @@map("campaigns")
 }
 
@@ -162,20 +177,13 @@ model Event {
   hourOfDay       Int?     // for confirmed_visit — 0-23 local hour of entry
   timestamp       DateTime @default(now())
 
+  @@index([timestamp])
   @@index([type, timestamp])
   @@index([citySlug, timestamp])
   @@index([storeId, type, timestamp])
   @@index([deviceId])
+  @@index([campaignId, type, timestamp])  // bounded daily taps scan — sentAt → NOW()
+  @@index([dealId, type])      // deal_view analytics — groupBy dealId
   @@map("events")
 }
 
-enum EventType {
-  app_open
-  deal_view
-  store_view
-  geofence_trigger
-  notification_tap
-  video_play
-  city_switch
-  search
-}

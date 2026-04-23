@@ -20,7 +20,7 @@ const newDealsLimiter = rateLimit({
 });
 
 // Public
-router.get('/', [query('cityId').optional().isUUID(), validate], ctrl.list);
+router.get('/', [query('cityId').optional().isUUID(), query('cursor').optional().isUUID(), validate], ctrl.list);
 router.get('/:id', [param('id').isUUID(), validate], ctrl.get);
 router.post('/:id/view', [param('id').isUUID(), validate], ctrl.recordView);
 
@@ -46,6 +46,8 @@ router.post(
     body('lat').isFloat({ min: -90, max: 90 }),
     body('lng').isFloat({ min: -180, max: 180 }),
     body('cityId').isUUID(),
+    body('website').optional({ nullable: true }).isURL({ require_protocol: true }).withMessage('website must be a valid URL starting with http:// or https://'),
+    body('phone').optional({ nullable: true }).isString().isLength({ max: 30 }),
     validate,
   ],
   ctrl.create
@@ -54,7 +56,16 @@ router.post(
 router.put(
   '/:id',
   authenticate,
-  [param('id').isUUID(), validate],
+  [
+    param('id').isUUID(),
+    body('name').optional().notEmpty(),
+    body('address').optional().notEmpty(),
+    body('lat').optional().isFloat({ min: -90, max: 90 }),
+    body('lng').optional().isFloat({ min: -180, max: 180 }),
+    body('website').optional({ nullable: true }).isURL({ require_protocol: true }).withMessage('website must be a valid URL'),
+    body('phone').optional({ nullable: true }).isString().isLength({ max: 30 }),
+    validate,
+  ],
   ctrl.update
 );
 
@@ -64,5 +75,8 @@ router.delete(
   [param('id').isUUID(), validate],
   ctrl.remove
 );
+
+// Lightweight city lookup — used by mobile auto-switch (no auth required)
+router.get('/:id/city', ctrl.getCity);
 
 module.exports = router;

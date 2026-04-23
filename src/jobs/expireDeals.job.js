@@ -45,7 +45,8 @@ async function runExpiryJob() {
     console.error('[Expiry cron] Failed:', err.message);
     return { success: false, error: err.message };
   } finally {
-    await prisma.$disconnect();
+    // Do NOT disconnect — Prisma client is shared across the app.
+    // Disconnecting here would drop the connection pool for all other requests.
   }
 }
 

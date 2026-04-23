@@ -83,7 +83,10 @@ bizdak-backend/
 │   │   ├── deal.controller.js
 │   │   ├── tag.controller.js
 │   │   ├── campaign.controller.js
-│   │   └── analytics.controller.js
+│   │   ├── analytics.controller.js
+│   │   ├── event.controller.js
+│   │   ├── upload.controller.js
+│   │   └── newdeals.controller.js
 │   ├── routes/
 │   │   ├── auth.routes.js
 │   │   ├── city.routes.js
@@ -91,7 +94,9 @@ bizdak-backend/
 │   │   ├── deal.routes.js
 │   │   ├── tag.routes.js
 │   │   ├── campaign.routes.js
-│   │   └── analytics.routes.js
+│   │   ├── analytics.routes.js
+│   │   ├── event.routes.js
+│   │   └── upload.routes.js
 │   ├── middleware/
 │   │   ├── auth.middleware.js      # JWT Bearer verification
 │   │   ├── validate.middleware.js  # express-validator helper
@@ -146,8 +151,11 @@ GET /api/cities/dakar/pack
   "city": { "id": "...", "name": "Dakar", "slug": "dakar", ... },
   "stores": [ { "id": "...", "name": "...", "lat": 14.69, "lng": -17.44, ... } ],
   "deals":  [ { "id": "...", "title": "...", "tags": [...], "store": {...}, ... } ],
+  "tags":   [ { "id": "...", "name": "Food", "slug": "food", "children": [...] } ],
   "generatedAt": "2025-03-15T10:00:00.000Z"
 }
+
+Deals are capped at 500 per city pack. Deals are filtered to: `isActive=true`, `startDate <= now`, `endDate >= now OR endDate = null`.
 ```
 
 ---
@@ -183,7 +191,7 @@ POST /api/stores
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/deals?cityId=&storeId=&tag=` | No | List active deals |
+| GET | `/api/deals?cityId=&storeId=&tag=` | No* | List deals (add `?includeInactive=true` with admin token to include inactive) |
 | GET | `/api/deals/:id` | No | Get deal detail |
 | POST | `/api/deals/:id/view` | No | Increment view counter |
 | POST | `/api/deals` | Yes | Create deal |
@@ -209,15 +217,41 @@ POST /api/deals
 
 ---
 
+### Events (anonymous analytics)
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/api/events` | No | Record anonymous event (rate limited: 30/min per IP) |
+
+Valid event types: `app_open`, `deal_view`, `store_view`, `geofence_trigger`, `notification_tap`, `video_play`, `city_switch`, `search`, `confirmed_visit`
+
+---
+
+### Upload
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/api/upload` | Yes | Upload image → Cloudinary, returns `{ url, publicId }` |
+| POST | `/api/upload/video` | Yes | Upload video → Cloudinary HLS transcode, returns `{ url, hlsUrl, thumbnailUrl, duration, publicId }` |
+
+---
+
+### New Deals (mobile — proximity notifications)
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/api/stores/:id/deals/new?since=` | No | Deals created after `since` ISO timestamp (rate limited: 30/min per IP) |
+
+
+---
+
 ### Tags
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/tags` | No | List all tags |
-| GET | `/api/tags/:slug` | No | Get tag by slug |
-| POST | `/api/tags` | Yes | Create tag |
-| PUT | `/api/tags/:id` | Yes | Update tag |
-| DELETE | `/api/tags/:id` | Yes | Delete tag |
+| GET | `/api/tags` | No | List all tags (flat with parent/children) |
+| POST | `/api/tags` | Yes | Create tag (max 2 levels of nesting) |
+| DELETE | `/api/tags/:id` | Yes | Delete tag (`?force=true` to cascade) |
 
 ---
 
@@ -240,6 +274,7 @@ Campaigns are the push notification engine. Create first, send when ready.
 | `CITY_WIDE` | `city_dakar` | Broadcast to everyone in the city |
 | `INTEREST_BASED` | `city_dakar_food` | Target users subscribed to a tag |
 | `STORE_SPECIFIC` | `city_dakar` | City-wide push; store filter is metadata for the app |
+| `CROSS_CITY` | `city_targetSlug` | Audience in a different city from the store's city |
 
 **Create campaign**
 ```json
@@ -250,6 +285,7 @@ POST /api/campaigns
   "type": "INTEREST_BASED",
   "cityId": "uuid",
   "tagSlug": "food",
+  "imageUrl": "https://res.cloudinary.com/bizdak/...",  // optional – shown in notification
   "dealIds": ["deal-uuid-1", "deal-uuid-2"]   // optional – linked deals
 }
 ```
@@ -265,6 +301,8 @@ POST /api/campaigns/:id/send
 ```
 
 Campaigns can only be sent once. A second `send` call returns `409 Conflict`.
+
+**Campaign images:** Add an optional `imageUrl` (Cloudinary HTTPS URL) to show a rich image in the push notification. Works on Android automatically. iOS requires the Notification Service Extension — see `bizdak-mobile/docs/IOS_NOTIFICATION_EXTENSION_SETUP.md`.
 
 ---
 
@@ -324,7 +362,8 @@ messaging().subscribeToTopic('city_dakar_food');
 
 - [ ] Set `NODE_ENV=production`
 - [ ] Use a strong random `JWT_SECRET` (32+ chars)
-- [ ] Replace `ADMIN_PASSWORD` with a bcrypt hash: `node -e "console.log(require('bcryptjs').hashSync('yourpassword', 12))"`
+- [ ] Set `ADMIN_PASSWORD_HASH` to a bcrypt hash and remove `ADMIN_PASSWORD`:
+  `node -e "console.log(require('bcryptjs').hashSync('yourpassword', 12))"`
 - [ ] Run `npm run db:deploy` (not `db:migrate`) in production
 - [ ] Enable PostgreSQL SSL: append `?sslmode=require` to `DATABASE_URL`
 - [ ] Set up CORS origin whitelist in `src/app.js`

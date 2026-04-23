@@ -36,7 +36,9 @@ async function list(req, res, next) {
  */
 async function create(req, res, next) {
   try {
-    const { name, slug, parentId } = req.body;
+    const name     = req.body.name?.trim();
+    const slug     = req.body.slug?.toLowerCase().trim(); // normalise — used in FCM topics
+    const parentId = req.body.parentId;
 
     // Validate parentId exists if provided
     if (parentId) {
@@ -71,6 +73,23 @@ async function create(req, res, next) {
  */
 async function remove(req, res, next) {
   try {
+    // Count deals AND child tags that will be affected
+    const [dealCount, childCount] = await Promise.all([
+      prisma.dealTag.count({ where: { tagId: req.params.id } }),
+      prisma.tag.count({ where: { parentId: req.params.id } }),
+    ]);
+
+    if ((dealCount > 0 || childCount > 0) && req.query.force !== 'true') {
+      return res.status(409).json({
+        error: [
+          dealCount > 0 ? `used by ${dealCount} deal(s)` : null,
+          childCount > 0 ? `has ${childCount} sub-tag(s) that will become root-level tags` : null,
+        ].filter(Boolean).join(' and ') + '. Pass ?force=true to proceed.',
+        dealCount,
+        childCount,
+      });
+    }
+
     await prisma.tag.delete({ where: { id: req.params.id } });
     res.status(204).end();
   } catch (err) { next(err); }

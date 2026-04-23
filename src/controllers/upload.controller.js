@@ -1,4 +1,4 @@
-const { getHLSUrl, getVideoThumbnail, extractPublicId } = require('../utils/cloudinary');
+const { getHLSUrl, getVideoThumbnail } = require('../utils/cloudinary');
 
 /**
  * POST /api/upload?type=deal|store
@@ -37,11 +37,17 @@ async function uploadVideoFile(req, res, next) {
     const hlsUrl      = getHLSUrl(publicId);
     const thumbnailUrl = getVideoThumbnail(publicId, '0.5');
 
+    // Duration (seconds) from the eager HLS transcode result
+    // Available because eager_async=false — Cloudinary transcodes before responding
+    const eager   = req.file.eager || [];
+    const duration = eager[0]?.duration ?? req.file.duration ?? null;
+
     res.status(201).json({
       url,           // direct mp4
       hlsUrl,        // adaptive HLS stream (preferred)
       thumbnailUrl,  // poster frame
       publicId,
+      duration,      // seconds (float) — used by DealForm to store videoDuration
     });
   } catch (err) { next(err); }
 }

@@ -3,7 +3,7 @@ const rateLimit = require('express-rate-limit');
 const { body } = require('express-validator');
 const { validate } = require('../middleware/validate.middleware');
 const { authenticate } = require('../middleware/auth.middleware');
-const { ingest, getEventStats } = require('../controllers/event.controller');
+const { ingest, getEventStats, VALID_TYPES } = require('../controllers/event.controller');
 
 const eventLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -13,11 +13,7 @@ const eventLimiter = rateLimit({
   message: { error: 'Too many event pings.' },
 });
 
-const VALID_TYPES = [
-  'app_open', 'deal_view', 'store_view', 'geofence_trigger',
-  'notification_tap', 'video_play', 'city_switch', 'search',
-  'confirmed_visit',
-];
+// VALID_TYPES imported from controller — single source of truth
 
 // Public — no auth, fire-and-forget from mobile
 router.post(
@@ -29,7 +25,7 @@ router.post(
     body('dealId').optional().isUUID(),
     body('storeId').optional().isUUID(),
     body('campaignId').optional().isUUID(),
-    body('deviceId').optional().isUUID(),
+    body('deviceId').optional().isString().isLength({ max: 64 }),
     body('durationSeconds').optional().isInt({ min: 0, max: 86400 }),
     body('hourOfDay').optional().isInt({ min: 0, max: 23 }),
     validate,

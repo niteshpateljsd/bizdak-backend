@@ -46,7 +46,8 @@ async function translateStoreById(storeId, force = false) {
     const store = await prisma.store.findUnique({ where: { id: storeId } });
     if (!store) return;
 
-    if (!force && store.nameFr) return;
+    // Only skip if BOTH translations exist — allows partial retranslation
+    if (!force && store.nameFr && store.descriptionFr) return;
 
     const { nameFr, descriptionFr } = await translateStore(store);
     if (!nameFr && !descriptionFr) return;
@@ -73,18 +74,24 @@ async function translateStoreById(storeId, force = false) {
  */
 async function backfillTranslations() {
   const BATCH = 10;
+  const MAX_ITEMS = 500; // Safety cap — prevents multi-hour HTTP timeouts
+                          // Run multiple times if you have more items
 
-  const untranslatedDeals = await prisma.deal.findMany({
-    where: { titleFr: null },
-    select: { id: true },
-  });
+  // Fetch both in parallel — independent queries
+  const [untranslatedDeals, untranslatedStores] = await Promise.all([
+    prisma.deal.findMany({
+      where: { titleFr: null },
+      select: { id: true },
+      take: MAX_ITEMS,
+    }),
+    prisma.store.findMany({
+      where: { nameFr: null },
+      select: { id: true },
+      take: MAX_ITEMS,
+    }),
+  ]);
 
-  const untranslatedStores = await prisma.store.findMany({
-    where: { nameFr: null },
-    select: { id: true },
-  });
-
-  console.log(`[Translate] Backfill: ${untranslatedDeals.length} deals, ${untranslatedStores.length} stores`);
+  console.log(`[Translate] Backfill: ${untranslatedDeals.length} deals, ${untranslatedStores.length} stores (capped at ${MAX_ITEMS} each)`);
 
   // Process deals in batches
   for (let i = 0; i < untranslatedDeals.length; i += BATCH) {
@@ -104,9 +111,17 @@ async function backfillTranslations() {
     }
   }
 
+  const [remainingDeals, remainingStores] = await Promise.all([
+    prisma.deal.count({ where: { titleFr: null } }),
+    prisma.store.count({ where: { nameFr: null } }),
+  ]);
+
   return {
-    deals:  untranslatedDeals.length,
-    stores: untranslatedStores.length,
+    deals:           untranslatedDeals.length,
+    stores:          untranslatedStores.length,
+    remainingDeals,
+    remainingStores,
+    complete:        remainingDeals === 0 && remainingStores === 0,
   };
 }
 

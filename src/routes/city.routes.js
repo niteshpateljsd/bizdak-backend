@@ -6,8 +6,8 @@ const ctrl = require('../controllers/city.controller');
 
 // Public
 router.get('/', ctrl.list);
-router.get('/:slug', ctrl.get);
-router.get('/:slug/pack', ctrl.getCityPack);
+router.get('/:slug', [param('slug').isSlug().withMessage('Invalid city slug format.'), validate], ctrl.get);
+router.get('/:slug/pack', [param('slug').isSlug().withMessage('Invalid city slug format.'), validate], ctrl.getCityPack);
 
 // Admin
 router.post(
@@ -30,6 +30,8 @@ router.put(
   [
     param('id').isUUID(),
     body('name').optional().notEmpty(),
+    // slug excluded — changing it orphans FCM subscriptions (immutable after creation)
+    body('country').optional().notEmpty(),
     body('lat').optional().isFloat({ min: -90, max: 90 }),
     body('lng').optional().isFloat({ min: -180, max: 180 }),
     validate,

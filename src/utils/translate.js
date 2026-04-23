@@ -1,6 +1,10 @@
 const axios = require('axios');
 
-const DEEPL_API_URL = 'https://api-free.deepl.com/v2/translate';
+// DeepL free tier: api-free.deepl.com | Paid tier: api.deepl.com
+// Set DEEPL_TIER=paid in .env to use paid tier
+const DEEPL_API_URL = process.env.DEEPL_TIER === 'paid'
+  ? 'https://api.deepl.com/v2/translate'
+  : 'https://api-free.deepl.com/v2/translate';
 
 /**
  * translateText
@@ -14,22 +18,40 @@ const DEEPL_API_URL = 'https://api-free.deepl.com/v2/translate';
  * @param {string} sourceLang — optional source hint, e.g. 'EN'
  * @returns {Promise<string>} — translated text
  */
-async function translateText(text, targetLang, sourceLang = null) {
+async function translateText(text, targetLang, sourceLang = null, attempt = 1) {
   if (!text?.trim()) return text;
   if (!process.env.DEEPL_API_KEY) {
     console.warn('[Translate] DEEPL_API_KEY not set — skipping translation');
     return null;
   }
 
-  const params = {
-    auth_key:    process.env.DEEPL_API_KEY,
+  // Build form-encoded body — keeps translated text out of URL/access logs
+  const formParams = new URLSearchParams({
     text,
     target_lang: targetLang.toUpperCase(),
-  };
-  if (sourceLang) params.source_lang = sourceLang.toUpperCase();
+  });
+  if (sourceLang) formParams.set('source_lang', sourceLang.toUpperCase());
 
-  const res = await axios.post(DEEPL_API_URL, null, { params });
-  return res.data.translations?.[0]?.text || null;
+  try {
+    // POST body (not URL params) — text content never appears in access logs
+    const res = await axios.post(DEEPL_API_URL, formParams.toString(), {
+      headers: {
+        Authorization: `DeepL-Auth-Key ${process.env.DEEPL_API_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      timeout: 10000,
+    });
+    return res.data.translations?.[0]?.text || null;
+  } catch (err) {
+    // Retry once on transient network errors (429 rate limit or 5xx)
+    const isRetryable = !err.response || err.response.status === 429 || err.response.status >= 500;
+    if (attempt < 2 && isRetryable) {
+      const delay = err.response?.status === 429 ? 5000 : 1500; // back off more on rate limit
+      await new Promise((r) => setTimeout(r, delay));
+      return translateText(text, targetLang, sourceLang, 2);
+    }
+    throw err;
+  }
 }
 
 /**

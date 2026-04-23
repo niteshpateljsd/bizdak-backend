@@ -11,10 +11,16 @@ async function main() {
     create: { name: 'Dakar', slug: 'dakar', country: 'Senegal', lat: 14.7167, lng: -17.4677 },
   });
 
-  const abidjan = await prisma.city.upsert({
-    where: { slug: 'abidjan' },
+  const houston = await prisma.city.upsert({
+    where: { slug: 'houston' },
     update: {},
-    create: { name: 'Abidjan', slug: 'abidjan', country: "Côte d'Ivoire", lat: 5.3599, lng: -4.0083 },
+    create: { name: 'Houston', slug: 'houston', country: 'United States', lat: 29.7604, lng: -95.3698 },
+  });
+
+  const capeTown = await prisma.city.upsert({
+    where: { slug: 'cape-town' },
+    update: {},
+    create: { name: 'Cape Town', slug: 'cape-town', country: 'South Africa', lat: -33.9249, lng: 18.4241 },
   });
 
   // Tags

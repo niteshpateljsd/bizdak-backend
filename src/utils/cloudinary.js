@@ -2,10 +2,15 @@ const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 const multer = require('multer');
 
+const { CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET } = process.env;
+if (!CLOUDINARY_CLOUD_NAME || !CLOUDINARY_API_KEY || !CLOUDINARY_API_SECRET) {
+  console.warn('[Cloudinary] Missing env vars — image/video uploads will fail. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET.');
+}
+
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key:    process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
+  cloud_name: CLOUDINARY_CLOUD_NAME,
+  api_key:    CLOUDINARY_API_KEY,
+  api_secret: CLOUDINARY_API_SECRET,
 });
 
 // ── Image storage ─────────────────────────────────────────────
@@ -37,7 +42,9 @@ const videoStorage = new CloudinaryStorage({
       { streaming_profile: 'hd',   format: 'm3u8' }, // HLS HD
       { streaming_profile: 'full_hd', format: 'm3u8' }, // HLS Full HD
     ],
-    eager_async: true,   // non-blocking — transcoding happens in background
+    eager_async: false,  // synchronous — HLS ready in response; duration available immediately
+    // Note: upload response takes longer (Cloudinary transcodes before responding)
+    // but this is the only way to get videoDuration without implementing webhooks.
     // Generate a thumbnail at 0.5s for use as poster frame
     transformation: [
       { quality: 'auto:good' },
@@ -111,7 +118,15 @@ function extractPublicId(url) {
   try {
     const parts = url.split('/upload/');
     if (parts.length < 2) return null;
-    return parts[1].replace(/^v\d+\//, '').replace(/\.[^.]+$/, '');
+    let path = parts[1];
+    // Strip any leading transformation segments (e.g. w_800/h_600/) before version or folder
+    // Cloudinary transformation segments contain letters+digits+underscore separated by commas
+    // Version segment is v followed by digits: v1234567890
+    // Strip everything up to and including the version token if present
+    path = path.replace(/^(?:[^/]+\/)*?(v\d+\/)?/, (_, ver) => ver || '');
+    // Strip file extension
+    path = path.replace(/\.[^.]+$/, '');
+    return path || null;
   } catch { return null; }
 }
 

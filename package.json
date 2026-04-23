@@ -1,13 +1,11 @@
 {
   "name": "bizdak-backend",
   "version": "1.0.0",
-  "description": "Bizdak – privacy-first local discovery platform backend",
+  "description": "Bizdak \u2013 privacy-first local discovery platform backend",
   "main": "src/index.js",
-
   "scripts": {
     "dev": "nodemon src/index.js",
     "start": "node src/index.js",
-    "postinstall": "npx prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:generate": "prisma generate",
@@ -36,5 +34,8 @@
   "devDependencies": {
     "nodemon": "^3.1.0",
     "prisma": "^5.10.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

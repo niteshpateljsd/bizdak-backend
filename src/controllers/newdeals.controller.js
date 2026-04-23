@@ -22,20 +22,30 @@ async function getNewDeals(req, res, next) {
       return res.status(400).json({ error: '`since` must be a valid ISO 8601 datetime.' });
     }
 
-    // Verify store exists
-    await prisma.store.findUniqueOrThrow({ where: { id } });
+    // Cap lookback to 30 days — prevents accidental full-history scans
+    const MAX_LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+    const cappedSince = new Date(Math.max(sinceDate.getTime(), Date.now() - MAX_LOOKBACK_MS));
+
+    // Verify store exists — findFirst with minimal select is faster than count
+    const storeExists = await prisma.store.findFirst({ where: { id }, select: { id: true } });
+    if (!storeExists) return res.status(404).json({ error: 'Store not found.' });
 
     const deals = await prisma.deal.findMany({
       where: {
         storeId: id,
         isActive: true,
-        endDate: { gte: new Date() },
-        createdAt: { gt: sinceDate },
+        AND: [
+          { OR: [{ endDate:   { gte: new Date() } }, { endDate:   null }] },
+          { OR: [{ startDate: { lte: new Date() } }, { startDate: null }] },
+        ],
+        createdAt: { gt: cappedSince },
       },
       select: {
         id: true,
         title: true,
+        titleFr: true,
         discountPercent: true,
+        imageUrl: true,
         createdAt: true,
         tags: { select: { tag: { select: { name: true, slug: true } } } },
       },
@@ -44,13 +54,16 @@ async function getNewDeals(req, res, next) {
 
     res.json({
       storeId: id,
-      since: sinceDate.toISOString(),
+      since:          cappedSince.toISOString(),    // effective lookback (capped at 30 days)
+      requestedSince: sinceDate.toISOString(),       // what the client originally sent
       count: deals.length,
       hasNew: deals.length > 0,
       deals: deals.map((d) => ({
         id: d.id,
         title: d.title,
+        titleFr: d.titleFr,
         discountPercent: d.discountPercent,
+        imageUrl: d.imageUrl || null,  // used by NotificationService for notification image
         tags: d.tags.map((dt) => dt.tag),
       })),
     });

@@ -1,5 +1,5 @@
 const router = require('express').Router();
-const { query } = require('express-validator');
+const { query, param } = require('express-validator');
 const { validate } = require('../middleware/validate.middleware');
 const { authenticate } = require('../middleware/auth.middleware');
 const ctrl = require('../controllers/analytics.controller');
@@ -33,6 +33,12 @@ router.get(
   ctrl.topStores
 );
 
-router.get('/campaigns', ctrl.campaignStats);
+router.get('/campaigns', [query('cityId').optional().isUUID(), validate], ctrl.campaignStats);
+
+router.get(
+  '/campaigns/:id',
+  [param('id').isUUID(), validate],
+  ctrl.campaignDetail
+);
 
 module.exports = router;
