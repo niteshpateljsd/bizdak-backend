@@ -14,7 +14,9 @@ async function login(req, res, next) {
       return res.status(500).json({ error: 'Server misconfiguration. Contact the administrator.' });
     }
 
+    // Always run bcrypt even on wrong email — prevents timing-based email enumeration
     if (email !== adminEmail) {
+      await bcrypt.compare(password, '$2a$12$invalidhashpaddingtoconstanttime');
       return res.status(401).json({ error: 'Invalid credentials.' });
     }
 

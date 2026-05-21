@@ -5,6 +5,23 @@ const { deleteAsset, extractPublicId } = require('../utils/cloudinary');
 
 const PAGE_SIZE = 20;
 
+// Server-side safeguard against accidental enormous payloads.
+// No UI-visible character counter — admin form behaves "unlimited" for any
+// real description. This cap is purely defensive: it stops a runaway paste
+// from filling the database with megabytes of text. 10k chars is several
+// pages of text — well past anything any reasonable deal description needs.
+const DESCRIPTION_MAX_CHARS = 10000;
+
+// Returns null if valid, or an error message string if too long.
+function validateDescriptionLength(description) {
+  if (description == null) return null; // optional / not provided — nothing to check
+  if (typeof description !== 'string') return null; // type errors handled elsewhere
+  if (description.length > DESCRIPTION_MAX_CHARS) {
+    return `Description is too long (${description.length} chars; max ${DESCRIPTION_MAX_CHARS}).`;
+  }
+  return null;
+}
+
 async function list(req, res, next) {
   try {
     // ?includeInactive=true — admin only; bypasses active/date filter to show all deals
@@ -37,7 +54,7 @@ async function list(req, res, next) {
 
     // Cursor-based pagination
     // ?cursor=<lastId> returns the next page after that record
-    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || PAGE_SIZE));
+    const limit  = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || PAGE_SIZE));
     const cursor = req.query.cursor; // ID of last item from previous page
 
     const deals = await prisma.deal.findMany({
@@ -82,7 +99,8 @@ async function get(req, res, next) {
 // Lightweight analytics ping – no user identity attached
 async function recordView(req, res, next) {
   try {
-    await prisma.deal.update({
+    // updateMany never throws on 0 rows — clean 204 even if deal was deleted
+    await prisma.deal.updateMany({
       where: { id: req.params.id },
       data: { viewCount: { increment: 1 } },
     });
@@ -100,6 +118,10 @@ async function create(req, res, next) {
                      'originalPrice', 'discountedPrice', 'discountPercent', 'videoDuration',
                      'startDate', 'endDate', 'isActive', 'cityId', 'storeId'];
     allowed.forEach((k) => { if (rawBody[k] !== undefined) dealData[k] = rawBody[k]; });
+
+    // Server-side safeguard — see DESCRIPTION_MAX_CHARS at top of file
+    const descErr = validateDescriptionLength(dealData.description);
+    if (descErr) return res.status(422).json({ error: descErr });
 
     // Validate all tagIds are UUIDs before attempting DB connect
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -126,6 +148,16 @@ async function create(req, res, next) {
       }
     }
 
+    // Cross-field validations
+    if (dealData.discountedPrice !== undefined && dealData.originalPrice !== undefined &&
+        dealData.discountedPrice > dealData.originalPrice) {
+      return res.status(422).json({ error: 'Discounted price cannot be greater than original price.' });
+    }
+    if (dealData.startDate && dealData.endDate &&
+        new Date(dealData.startDate) > new Date(dealData.endDate)) {
+      return res.status(422).json({ error: 'Start date cannot be after end date.' });
+    }
+
     const deal = await prisma.deal.create({
       data: {
         ...dealData,
@@ -148,12 +180,16 @@ async function update(req, res, next) {
   try {
     const { tags, ...rawData } = req.body;
 
-    // Whitelist updatable fields — prevent mass assignment of viewCount, cityId, storeId etc.
+    // Whitelist updatable fields — prevent mass assignment of viewCount, cityId etc.
     const dealData = {};
     const allowed = ['title', 'description', 'imageUrl', 'videoUrl', 'videoThumbnailUrl',
                      'originalPrice', 'discountedPrice', 'discountPercent', 'videoDuration',
-                     'startDate', 'endDate', 'isActive'];
+                     'startDate', 'endDate', 'isActive', 'storeId'];
     allowed.forEach((k) => { if (rawData[k] !== undefined) dealData[k] = rawData[k]; });
+
+    // Server-side safeguard — see DESCRIPTION_MAX_CHARS at top of file
+    const descErr = validateDescriptionLength(dealData.description);
+    if (descErr) return res.status(422).json({ error: descErr });
 
     // Validate tag IDs are UUIDs if provided
     if (tags !== undefined) {
@@ -171,12 +207,34 @@ async function update(req, res, next) {
       }
     }
 
-    // Fetch current deal — also gives us assets for Cloudinary cleanup and validates existence
+    // Fetch current deal — validates existence and provides assets for Cloudinary cleanup
     const existing = await prisma.deal.findUnique({
       where: { id: req.params.id },
-      select: { imageUrl: true, videoUrl: true, videoThumbnailUrl: true, title: true, description: true },
+      select: { imageUrl: true, videoUrl: true, videoThumbnailUrl: true, title: true, description: true, storeId: true, cityId: true },
     });
     if (!existing) return res.status(404).json({ error: 'Deal not found.' });
+
+    // Validate new storeId only if it actually changed — avoids extra queries when storeId is unchanged
+    if (dealData.storeId && dealData.storeId !== existing.storeId) {
+      const storeCheck = await prisma.store.findFirst({
+        where: { id: dealData.storeId, cityId: existing.cityId }, select: { id: true },
+      });
+      if (!storeCheck) return res.status(422).json({ error: 'Store does not belong to this deal\'s city.' });
+    }
+
+    // Cross-field validations on update
+    const chkOriginal = dealData.originalPrice !== undefined ? dealData.originalPrice : existing.originalPrice;
+    const chkDiscounted = dealData.discountedPrice !== undefined ? dealData.discountedPrice : existing.discountedPrice;
+    if (chkOriginal !== null && chkDiscounted !== null &&
+        chkOriginal !== undefined && chkDiscounted !== undefined &&
+        Number(chkDiscounted) > Number(chkOriginal)) {
+      return res.status(422).json({ error: 'Discounted price cannot be greater than original price.' });
+    }
+    const chkStart = dealData.startDate !== undefined ? dealData.startDate : existing.startDate;
+    const chkEnd = dealData.endDate !== undefined ? dealData.endDate : existing.endDate;
+    if (chkStart && chkEnd && new Date(chkStart) > new Date(chkEnd)) {
+      return res.status(422).json({ error: 'Start date cannot be after end date.' });
+    }
 
     const deal = await prisma.$transaction(async (tx) => {
       if (tags !== undefined) {
@@ -286,6 +344,10 @@ async function createBulk(req, res, next) {
                      'startDate', 'endDate', 'isActive', 'cityId'];
     allowed.forEach((k) => { if (rawBody[k] !== undefined) dealData[k] = rawBody[k]; });
 
+    // Server-side safeguard — see DESCRIPTION_MAX_CHARS at top of file
+    const descErr = validateDescriptionLength(dealData.description);
+    if (descErr) return res.status(422).json({ error: descErr });
+
     // Validate tag UUIDs
     const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const badTags = tags.filter((id) => !uuidRe.test(id));
@@ -359,8 +421,12 @@ async function updateGroup(req, res, next) {
     const dealData = {};
     const allowed = ['title', 'description', 'imageUrl', 'videoUrl', 'videoThumbnailUrl',
                      'originalPrice', 'discountedPrice', 'discountPercent', 'videoDuration',
-                     'startDate', 'endDate', 'isActive'];
+                     'startDate', 'endDate', 'isActive', 'storeId'];
     allowed.forEach((k) => { if (rawBody[k] !== undefined) dealData[k] = rawBody[k]; });
+
+    // Server-side safeguard — see DESCRIPTION_MAX_CHARS at top of file
+    const descErr = validateDescriptionLength(dealData.description);
+    if (descErr) return res.status(422).json({ error: descErr });
 
     // Find all deals in this group
     const groupDeals = await prisma.deal.findMany({
@@ -451,7 +517,9 @@ async function getGroup(req, res, next) {
       },
       orderBy: { createdAt: 'asc' },
     });
-    res.json(group);
+    // formatDeal flattens DealTag join rows into plain tag objects,
+    // consistent with every other deal endpoint in this controller.
+    res.json(group.map(formatDeal));
   } catch (err) { next(err); }
 }
 

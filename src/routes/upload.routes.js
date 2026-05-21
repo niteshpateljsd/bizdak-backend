@@ -27,6 +27,8 @@ function setVideoFolder(req, res, next) {
 router.post('/', authenticate, setFolder, uploadImage.single('image'), handleImage);
 
 // POST /api/upload/video?type=deal|store  — video upload
-router.post('/video', authenticate, setVideoFolder, uploadVideo.single('video'), handleVideo);
+// Video uploads can take several minutes — extend timeout to 15 min
+// Render's default 30s timeout would kill large uploads
+router.post('/video', (req, res, next) => { req.setTimeout(15 * 60 * 1000); next() }, authenticate, setVideoFolder, uploadVideo.single('video'), handleVideo);
 
 module.exports = router;

@@ -30,7 +30,7 @@ router.put(
   [
     param('id').isUUID(),
     body('name').optional().notEmpty(),
-    // slug excluded — changing it orphans FCM subscriptions (immutable after creation)
+    // slug is intentionally excluded — changing slug breaks FCM topic subscriptions
     body('country').optional().notEmpty(),
     body('lat').optional().isFloat({ min: -90, max: 90 }),
     body('lng').optional().isFloat({ min: -180, max: 180 }),
@@ -38,6 +38,9 @@ router.put(
   ],
   ctrl.update
 );
+
+// Count stores/deals in a city without deleting — used by admin delete confirmation dialog
+router.get('/:id/count', authenticate, [param('id').isUUID(), validate], ctrl.countCityData);
 
 router.delete('/:id', authenticate, [param('id').isUUID(), validate], ctrl.remove);
 

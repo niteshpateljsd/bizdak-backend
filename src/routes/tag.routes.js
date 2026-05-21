@@ -14,11 +14,25 @@ router.post(
   [
     body('name').notEmpty().withMessage('Tag name required.'),
     body('slug').notEmpty().isSlug().withMessage('Slug must be a valid slug.'),
-    body('parentId').optional().isUUID().withMessage('parentId must be a UUID.'),
+    body('parentId').optional({ nullable: true }).isUUID().withMessage('parentId must be a UUID.'),
     validate,
   ],
   ctrl.create
 );
+
+router.put(
+  '/:id',
+  authenticate,
+  [
+    param('id').isUUID(),
+    body('name').optional().notEmpty().withMessage('Name cannot be empty.'),
+    // slug is intentionally excluded — changing slug breaks FCM topic subscriptions
+    validate,
+  ],
+  ctrl.update
+);
+
+router.get('/:id/count', authenticate, [param('id').isUUID(), validate], ctrl.countTagData);
 
 router.delete(
   '/:id',

@@ -1,5 +1,5 @@
 const prisma = require('../utils/prisma');
-const { translateDeal, translateStore } = require('../utils/translate');
+const { translateText, translateDeal, translateStore } = require('../utils/translate');
 
 /**
  * translateDealById
@@ -47,17 +47,14 @@ async function translateStoreById(storeId, force = false) {
     if (!store) return;
 
     // Only skip if BOTH translations exist — allows partial retranslation
-    if (!force && store.nameFr && store.descriptionFr) return;
+    if (!force && store.descriptionFr) return; // nameFr intentionally not checked — names are not translated
 
-    const { nameFr, descriptionFr } = await translateStore(store);
-    if (!nameFr && !descriptionFr) return;
+    const { descriptionFr } = await translateStore(store);
+    if (!descriptionFr) return;
 
     await prisma.store.update({
       where: { id: storeId },
-      data: {
-        ...(nameFr        ? { nameFr }        : {}),
-        ...(descriptionFr ? { descriptionFr } : {}),
-      },
+      data: { descriptionFr },
     });
     console.log(`[Translate] Store ${storeId} translated to FR`);
   } catch (err) {
@@ -77,28 +74,33 @@ async function backfillTranslations() {
   const MAX_ITEMS = 500; // Safety cap — prevents multi-hour HTTP timeouts
                           // Run multiple times if you have more items
 
-  // Fetch both in parallel — independent queries
-  const [untranslatedDeals, untranslatedStores] = await Promise.all([
+  // Fetch all in parallel — independent queries
+  const [untranslatedDeals, untranslatedStores, untranslatedTags] = await Promise.all([
     prisma.deal.findMany({
       where: { titleFr: null },
       select: { id: true },
       take: MAX_ITEMS,
     }),
     prisma.store.findMany({
-      where: { nameFr: null },
+      where: { descriptionFr: null, description: { not: null } }, // nameFr intentionally not set — store names are proper nouns
       select: { id: true },
+      take: MAX_ITEMS,
+    }),
+    prisma.tag.findMany({
+      where: { nameFr: null },
+      select: { id: true, name: true },
       take: MAX_ITEMS,
     }),
   ]);
 
-  console.log(`[Translate] Backfill: ${untranslatedDeals.length} deals, ${untranslatedStores.length} stores (capped at ${MAX_ITEMS} each)`);
+  console.log(`[Translate] Backfill: ${untranslatedDeals.length} deals, ${untranslatedStores.length} stores, ${untranslatedTags.length} tags`);
 
   // Process deals in batches
   for (let i = 0; i < untranslatedDeals.length; i += BATCH) {
     const batch = untranslatedDeals.slice(i, i + BATCH);
     await Promise.all(batch.map((d) => translateDealById(d.id)));
     if (i + BATCH < untranslatedDeals.length) {
-      await new Promise((r) => setTimeout(r, 500)); // small pause between batches
+      await new Promise((r) => setTimeout(r, 500));
     }
   }
 
@@ -111,17 +113,36 @@ async function backfillTranslations() {
     }
   }
 
-  const [remainingDeals, remainingStores] = await Promise.all([
+  // Process tags in batches — tags are short strings, translate in one batch
+  for (let i = 0; i < untranslatedTags.length; i += BATCH) {
+    const batch = untranslatedTags.slice(i, i + BATCH);
+    await Promise.all(batch.map(async (tag) => {
+      try {
+        const nameFr = await translateText(tag.name, 'FR', 'EN');
+        if (nameFr) {
+          await prisma.tag.update({ where: { id: tag.id }, data: { nameFr } });
+        }
+      } catch { /* skip — non-critical */ }
+    }));
+    if (i + BATCH < untranslatedTags.length) {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
+  // Count remaining untranslated items
+  const [remainingDealsCount, remainingStoresCount, remainingTagsCount] = await Promise.all([
     prisma.deal.count({ where: { titleFr: null } }),
     prisma.store.count({ where: { nameFr: null } }),
+    prisma.tag.count({ where: { nameFr: null } }),
   ]);
 
   return {
-    deals:           untranslatedDeals.length,
-    stores:          untranslatedStores.length,
-    remainingDeals,
-    remainingStores,
-    complete:        remainingDeals === 0 && remainingStores === 0,
+    deals:  untranslatedDeals.length,
+    stores: untranslatedStores.length,
+    tags:   untranslatedTags.length,
+    remainingDeals:  remainingDealsCount,
+    remainingStores: remainingStoresCount,
+    remainingTags:   remainingTagsCount,
   };
 }
 

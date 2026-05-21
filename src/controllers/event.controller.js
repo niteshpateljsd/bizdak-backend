@@ -5,9 +5,9 @@ const { Prisma } = require('@prisma/client');
 const VALID_TYPES = [
   'app_open', 'deal_view', 'store_view', 'geofence_trigger',
   'notification_tap', 'video_play', 'city_switch', 'search',
-  'confirmed_visit',
+  'confirmed_visit', 'deal_share',
 ];
-module.exports.VALID_TYPES = VALID_TYPES;
+// VALID_TYPES is exported in module.exports below — see end of file
 
 /**
  * POST /api/events
@@ -185,6 +185,16 @@ async function getEventStats(req, res, next) {
 
     const uniqueDeviceCount = Number(uniqueDevicesRaw[0]?.count ?? 0);
 
+    // Resolve store names for confirmed-visit ranking — groupBy gives storeId only
+    const visitStoreIds = visitsByStore.map((r) => r.storeId).filter(Boolean);
+    const visitStores = visitStoreIds.length
+      ? await prisma.store.findMany({
+          where: { id: { in: visitStoreIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const storeNameMap = Object.fromEntries(visitStores.map((s) => [s.id, s.name]));
+
     res.json({
       period: { since, until, windowDays, citySlug, skipDailyChart },
       summary: {
@@ -208,6 +218,7 @@ async function getEventStats(req, res, next) {
       storeVisits: {
         byStore: visitsByStore.map((r) => ({
           storeId:        r.storeId,
+          storeName:      storeNameMap[r.storeId] || null,
           visits:         r._count.id,
           avgMinutes:     r._avg.durationSeconds
             ? Math.round(r._avg.durationSeconds / 60 * 10) / 10
@@ -222,4 +233,4 @@ async function getEventStats(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { ingest, getEventStats };
+module.exports = { ingest, getEventStats, VALID_TYPES };

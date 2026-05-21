@@ -18,7 +18,7 @@ async function list(req, res, next) {
         deals:      { include: { deal: { select: { id: true, title: true } } } },
       },
       orderBy: { createdAt: 'desc' },
-      take: limit + 1,
+      take:   limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
 
@@ -61,17 +61,22 @@ async function create(req, res, next) {
   try {
     const { dealIds = [], ...rawBody } = req.body;
 
-    // Coerce empty string storeId to undefined — frontend may send '' when no store selected
-    if (rawBody.storeId === '') rawBody.storeId = undefined;
-
     // Whitelist allowed campaign fields — prevent mass assignment
     const data = {};
-    const allowedFields = ['title', 'body', 'imageUrl', 'type', 'cityId', 'storeId', 'tagSlug'];
+    const allowedFields = ['title', 'body', 'type', 'cityId', 'storeId', 'tagSlug', 'imageUrl'];
     allowedFields.forEach((k) => { if (rawBody[k] !== undefined) data[k] = rawBody[k]; });
     // targetCityId only relevant for CROSS_CITY — strip it for other types
     if (rawBody.type === 'CROSS_CITY' && rawBody.targetCityId) {
       data.targetCityId = rawBody.targetCityId;
     }
+
+    // Normalize empty strings to null — the admin form sends '' for unselected
+    // optional fields (storeId, tagSlug, imageUrl). An empty string is NOT a
+    // valid UUID and will cause a Prisma FK violation crash. Convert to null
+    // so Prisma stores NULL in the DB, which the schema allows (String?).
+    if (data.storeId   === '') data.storeId   = null;
+    if (data.tagSlug   === '') data.tagSlug   = null;
+    if (data.imageUrl  === '') data.imageUrl  = null;
 
     // Validate dealIds are valid UUIDs to prevent injection
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -175,20 +180,20 @@ async function send(req, res, next) {
     }
 
     const data = {
-      campaignId: campaign.id,
-      type:       campaign.type,
+      campaignId:     campaign.id,
+      campaignTitle:  campaign.title, // read by mobile resolveNotificationNav for campaign banner
+      type:           campaign.type,
       storeCitySlug:  campaign.city.slug,
       targetCitySlug: campaign.targetCity?.slug || campaign.city.slug,
     };
     if (campaign.storeId)      data.storeId = campaign.storeId;
     if (campaign.deals.length) data.dealIds = campaign.deals.map((cd) => cd.deal.id).join(',');
-    if (campaign.imageUrl)     data.imageUrl = campaign.imageUrl;
 
     try {
       await sendToTopic(campaign.fcmTopic, {
         title:    campaign.title,
         body:     campaign.body,
-        imageUrl: campaign.imageUrl || null,
+        imageUrl: campaign.imageUrl || null, // shown as banner image on iOS and Android 12+
         data,
       });
     } catch (fcmErr) {
@@ -196,11 +201,7 @@ async function send(req, res, next) {
       await prisma.campaign.update({
         where: { id: campaign.id },
         data:  { sentAt: null },
-      }).catch((rbErr) => {
-        console.error(`[Campaign] CRITICAL: FCM failed AND rollback failed for campaign ${campaign.id}. ` +
-          `Campaign shows as sent but no notification was delivered. Manual fix required. ` +
-          `Rollback error: ${rbErr.message}`);
-      }); // best-effort rollback
+      }).catch(() => {}); // best-effort rollback
       throw fcmErr; // propagate to error handler
     }
 

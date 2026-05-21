@@ -34,11 +34,6 @@ router.get(
 );
 
 router.get('/campaigns', [query('cityId').optional().isUUID(), validate], ctrl.campaignStats);
-
-router.get(
-  '/campaigns/:id',
-  [param('id').isUUID(), validate],
-  ctrl.campaignDetail
-);
+router.get('/campaigns/:id', [param('id').isUUID(), validate], ctrl.campaignDetail);
 
 module.exports = router;

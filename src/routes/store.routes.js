@@ -24,6 +24,9 @@ router.get('/', [query('cityId').optional().isUUID(), query('cursor').optional()
 router.get('/:id', [param('id').isUUID(), validate], ctrl.get);
 router.post('/:id/view', [param('id').isUUID(), validate], ctrl.recordView);
 
+// Returns the city a store belongs to — used by mobile auto-switch
+router.get('/:id/city', [param('id').isUUID(), validate], ctrl.getCity);
+
 // Mobile — battery-efficient new deals check (no auth, no user ID)
 router.get(
   '/:id/deals/new',
@@ -46,7 +49,13 @@ router.post(
     body('lat').isFloat({ min: -90, max: 90 }),
     body('lng').isFloat({ min: -180, max: 180 }),
     body('cityId').isUUID(),
-    body('website').optional({ nullable: true }).isURL({ require_protocol: true }).withMessage('website must be a valid URL starting with http:// or https://'),
+    body('website')
+      .optional({ nullable: true })
+      .custom((v) => !v || v === '')  // allow empty string — treated as null in controller
+      .bail()
+      .if((v) => v && v !== '')
+      .isURL({ require_protocol: true, require_tld: true, protocols: ['http', 'https'] })
+      .withMessage('website must be a valid URL starting with http:// or https://'),
     body('phone').optional({ nullable: true }).isString().isLength({ max: 30 }),
     validate,
   ],
@@ -62,7 +71,13 @@ router.put(
     body('address').optional().notEmpty(),
     body('lat').optional().isFloat({ min: -90, max: 90 }),
     body('lng').optional().isFloat({ min: -180, max: 180 }),
-    body('website').optional({ nullable: true }).isURL({ require_protocol: true }).withMessage('website must be a valid URL'),
+    body('website')
+      .optional({ nullable: true })
+      .custom((v) => !v || v === '')
+      .bail()
+      .if((v) => v && v !== '')
+      .isURL({ require_protocol: true, require_tld: true, protocols: ['http', 'https'] })
+      .withMessage('website must be a valid URL starting with http:// or https://'),
     body('phone').optional({ nullable: true }).isString().isLength({ max: 30 }),
     validate,
   ],
@@ -75,8 +90,5 @@ router.delete(
   [param('id').isUUID(), validate],
   ctrl.remove
 );
-
-// Lightweight city lookup — used by mobile auto-switch (no auth required)
-router.get('/:id/city', ctrl.getCity);
 
 module.exports = router;

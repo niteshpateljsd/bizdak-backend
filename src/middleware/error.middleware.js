@@ -37,10 +37,7 @@ function errorHandler(err, req, res, next) {
   }
 
   const status = err.status || err.statusCode || 500;
-  // Don't expose internal error details in production for server errors (5xx)
-  const message = (status < 500 || process.env.NODE_ENV !== 'production')
-    ? (err.message || 'Internal server error.')
-    : 'Internal server error.';
+  const message = err.message || 'Internal server error.';
   res.status(status).json({ error: message });
 }
 

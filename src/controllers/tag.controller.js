@@ -1,4 +1,16 @@
 const prisma = require('../utils/prisma');
+const { translateText } = require('../utils/translate');
+
+// Silently translate a tag name to French — catches errors so tag creation
+// never fails just because DeepL is unavailable
+async function translateTagName(name) {
+  try {
+    const nameFr = await translateText(name, 'FR', 'EN');
+    return nameFr || null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * GET /api/tags
@@ -50,8 +62,11 @@ async function create(req, res, next) {
       }
     }
 
+    // Translate name to French — fire-and-forget friendly (never blocks tag creation)
+    const nameFr = await translateTagName(name);
+
     const tag = await prisma.tag.create({
-      data: { name, slug, parentId: parentId || null },
+      data: { name, nameFr, slug, parentId: parentId || null },
       include: {
         parent:   { select: { id: true, name: true, slug: true } },
         children: true,
@@ -62,6 +77,48 @@ async function create(req, res, next) {
   } catch (err) {
     if (err.code === 'P2002') {
       return res.status(409).json({ error: 'A tag with this name or slug already exists.' });
+    }
+    next(err);
+  }
+}
+
+/**
+ * PUT /api/tags/:id
+ * Update a tag's name and/or slug.
+ * parentId cannot be changed — create a new tag instead.
+ * Body: { name?, slug? }
+ */
+async function update(req, res, next) {
+  try {
+    const { name } = req.body;
+    // slug is intentionally excluded from update — changing slug breaks FCM topic subscriptions
+    const data = {};
+    if (name !== undefined) {
+      data.name   = name.trim();
+      // Re-translate whenever the English name changes
+      data.nameFr = await translateTagName(name.trim());
+    }
+
+    if (!Object.keys(data).length) {
+      return res.status(422).json({ error: 'Provide at least one field to update (name or slug).' });
+    }
+
+    const tag = await prisma.tag.update({
+      where: { id: req.params.id },
+      data,
+      include: {
+        parent:   { select: { id: true, name: true, slug: true } },
+        children: { orderBy: { name: 'asc' } },
+      },
+    });
+
+    res.json(tag);
+  } catch (err) {
+    if (err.code === 'P2002') {
+      return res.status(409).json({ error: 'A tag with this name or slug already exists.' });
+    }
+    if (err.code === 'P2025') {
+      return res.status(404).json({ error: 'Tag not found.' });
     }
     next(err);
   }
@@ -95,4 +152,15 @@ async function remove(req, res, next) {
   } catch (err) { next(err); }
 }
 
-module.exports = { list, create, remove };
+
+async function countTagData(req, res, next) {
+  try {
+    const [dealCount, childCount] = await Promise.all([
+      prisma.dealTag.count({ where: { tagId: req.params.id } }),
+      prisma.tag.count({ where: { parentId: req.params.id } }),
+    ]);
+    res.json({ deals: dealCount, children: childCount });
+  } catch (err) { next(err); }
+}
+
+module.exports = { list, create, update, remove, countTagData };

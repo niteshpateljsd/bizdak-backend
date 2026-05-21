@@ -19,14 +19,12 @@ router.post(
       .isIn(['CITY_WIDE', 'INTEREST_BASED', 'STORE_SPECIFIC', 'CROSS_CITY'])
       .withMessage('type must be CITY_WIDE, INTEREST_BASED, STORE_SPECIFIC, or CROSS_CITY.'),
     body('cityId').isUUID().withMessage('Valid cityId required.'),
-    body('storeId').optional().isUUID(),
-    body('targetCityId').optional().isUUID().withMessage('targetCityId must be a valid UUID.'),
+    body('storeId').optional({ nullable: true, checkFalsy: true }).isUUID(),
+    body('targetCityId').optional({ nullable: true, checkFalsy: true }).isUUID().withMessage('targetCityId must be a valid UUID.'),
     body('tagSlug')
       .if(body('type').equals('INTEREST_BASED'))
       .notEmpty()
       .withMessage('tagSlug is required for INTEREST_BASED campaigns.'),
-    body('imageUrl').optional({ nullable: true }).isURL({ require_protocol: true })
-      .withMessage('imageUrl must be a valid URL starting with https://'),
     body('dealIds').optional().isArray(),
     validate,
   ],

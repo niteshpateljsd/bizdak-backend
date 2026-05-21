@@ -25,24 +25,34 @@ async function translateText(text, targetLang, sourceLang = null, attempt = 1) {
     return null;
   }
 
-  // Build form-encoded body — keeps translated text out of URL/access logs
-  const formParams = new URLSearchParams({
+  // RB10: Check quota before translating — DeepL returns 456 on quota exceeded
+  // We track this in memory to avoid hammering the API once quota is hit
+  if (translateText._quotaExceeded) {
+    console.warn('[Translate] DeepL quota exceeded — skipping translation until restart');
+    return null;
+  }
+
+  const params = {
     text,
     target_lang: targetLang.toUpperCase(),
-  });
-  if (sourceLang) formParams.set('source_lang', sourceLang.toUpperCase());
+  };
+  if (sourceLang) params.source_lang = sourceLang.toUpperCase();
 
   try {
-    // POST body (not URL params) — text content never appears in access logs
-    const res = await axios.post(DEEPL_API_URL, formParams.toString(), {
-      headers: {
-        Authorization: `DeepL-Auth-Key ${process.env.DEEPL_API_KEY}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
+    // Use Authorization header — keeps API key out of server access logs
+    const res = await axios.post(DEEPL_API_URL, null, {
+      params,
+      headers: { Authorization: `DeepL-Auth-Key ${process.env.DEEPL_API_KEY}` },
       timeout: 10000,
     });
     return res.data.translations?.[0]?.text || null;
   } catch (err) {
+    // RB10: DeepL quota exceeded (456) — stop translating, log clearly
+    if (err.response?.status === 456) {
+      translateText._quotaExceeded = true;
+      console.error('[Translate] ⚠️  DeepL monthly quota EXCEEDED — translations stopped until next billing cycle or plan upgrade. Check https://www.deepl.com/pro-account/usage');
+      return null; // return null gracefully — deal saved in English
+    }
     // Retry once on transient network errors (429 rate limit or 5xx)
     const isRetryable = !err.response || err.response.status === 429 || err.response.status >= 500;
     if (attempt < 2 && isRetryable) {
@@ -77,11 +87,12 @@ async function translateDeal(deal) {
  * Translates store name + description to French.
  */
 async function translateStore(store) {
-  const [nameFr, descriptionFr] = await Promise.all([
-    translateText(store.name,        'FR'),
-    translateText(store.description, 'FR'),
-  ]);
-  return { nameFr, descriptionFr };
+  // Store names are proper nouns — not translated.
+  // Only description is localised.
+  const descriptionFr = store.description
+    ? await translateText(store.description, 'FR')
+    : null;
+  return { descriptionFr };
 }
 
 module.exports = { translateText, translateDeal, translateStore };

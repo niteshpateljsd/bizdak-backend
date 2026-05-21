@@ -8,10 +8,7 @@ function getFirebaseApp() {
     if (!FIREBASE_PROJECT_ID || !FIREBASE_PRIVATE_KEY || !FIREBASE_CLIENT_EMAIL) {
       throw new Error('[Firebase] Missing required env vars: FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, FIREBASE_CLIENT_EMAIL');
     }
-    // getApps() checks if the default app already exists — prevents
-    // 'Firebase App named [DEFAULT] already exists' on hot-reload / server restart
-    const existing = admin.apps.find((a) => a.name === '[DEFAULT]');
-    app = existing || admin.initializeApp({
+    app = admin.initializeApp({
       credential: admin.credential.cert({
         projectId:   FIREBASE_PROJECT_ID,
         privateKey:  FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n'),
@@ -37,6 +34,10 @@ function buildTopic(citySlug, tagSlug = null) {
 /**
  * Send a push notification to an FCM topic.
  * No user identity is involved — topic-based only.
+ *
+ * imageUrl (optional): shown as a rich notification image.
+ *   Android 12+: notification.image
+ *   iOS:         apns.fcm_options.image (requires mutable-content: 1)
  */
 async function sendToTopic(topic, { title, body, imageUrl = null, data = {} }) {
   getFirebaseApp();
@@ -45,41 +46,39 @@ async function sendToTopic(topic, { title, body, imageUrl = null, data = {} }) {
     notification: {
       title,
       body,
-      // imageUrl in notification block: shown natively on Android 12+
-      ...(imageUrl ? { imageUrl } : {}),
+      // Android 12+ shows this as the rich notification image
+      ...(imageUrl ? { image: imageUrl } : {}),
     },
-    // FCM requires all data values to be non-null strings
+    // FCM requires all data values to be strings
     data: Object.fromEntries(
-      Object.entries(data)
-        .filter(([, v]) => v != null)
-        .map(([k, v]) => [k, String(v)])
+      Object.entries(data).map(([k, v]) => [k, String(v)])
     ),
     topic,
     android: {
       priority: 'high',
       notification: {
-        sound:     'default',
-        channelId: 'bizdak-campaigns', // high-importance channel with image support
-        // Large image on Android — shown in expanded notification shade
-        ...(imageUrl ? {
-          imageUrl,
-        } : {}),
+        sound: 'default',
+        // channelId must match the channel created in App.js
+        // (Notifications.setNotificationChannelAsync 'bizdak-campaigns').
+        // Without this, Android 8+ silently uses the default channel which
+        // may not have HIGH importance — preventing heads-up notifications.
+        channelId: 'bizdak-campaigns',
+        // imageUrl passed here too for older Android Firebase SDK compatibility
+        ...(imageUrl ? { imageUrl } : {}),
       },
     },
     apns: {
       payload: {
         aps: {
-          sound:           'default',
-          badge:           1,
-          // mutable-content: 1 tells iOS to wake the Notification Service Extension
-          // so it can download and attach the image before displaying the notification
+          sound: 'default',
+          badge: 1,
+          // mutable-content: 1 allows the iOS notification service extension
+          // to download and attach the image before display
           'mutable-content': imageUrl ? 1 : 0,
         },
       },
-      fcmOptions: {
-        // FCM passes this to APNS — Extension reads from notification.userInfo.imageUrl
-        ...(imageUrl ? { imageUrl } : {}),
-      },
+      // fcm_options.image is the correct FCM field for iOS notification images
+      ...(imageUrl ? { fcm_options: { image: imageUrl } } : {}),
     },
   };
 

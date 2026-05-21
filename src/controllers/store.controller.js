@@ -9,7 +9,7 @@ async function list(req, res, next) {
     const where = {};
     if (req.query.cityId) where.cityId = req.query.cityId;
 
-    const limit  = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || PAGE_SIZE));
+    const limit  = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || PAGE_SIZE));
     const cursor = req.query.cursor;
 
     const stores = await prisma.store.findMany({
@@ -52,13 +52,8 @@ async function get(req, res, next) {
       include: {
         city: true,
         deals: {
-          where: {
-            isActive: true,
-            AND: [
-              { OR: [{ endDate:   { gte: new Date() } }, { endDate:   null }] },
-              { OR: [{ startDate: { lte: new Date() } }, { startDate: null }] },
-            ],
-          },
+          // No where filter — return ALL deals so the admin can see both active and expired.
+          // The frontend (StoreDetail) partitions them into activeDeals / expiredDeals itself.
           include: { tags: { include: { tag: true } } },
           orderBy: { createdAt: 'desc' },
         },
@@ -74,7 +69,8 @@ async function get(req, res, next) {
 // Lightweight analytics ping – no user identity attached
 async function recordView(req, res, next) {
   try {
-    await prisma.store.update({
+    // updateMany never throws on 0 rows — clean 204 even if store was deleted
+    await prisma.store.updateMany({
       where: { id: req.params.id },
       data: { viewCount: { increment: 1 } },
     });
@@ -85,9 +81,13 @@ async function recordView(req, res, next) {
 async function create(req, res, next) {
   try {
     const {
-      name, description, address, lat, lng,
-      phone, website, imageUrl, videoUrl, videoThumbnailUrl, cityId,
+      name: rawName, description, address: rawAddress, lat, lng,
+      phone, website, imageUrl, videoUrl, videoThumbnailUrl, videoDuration, cityId,
     } = req.body;
+    const name    = rawName?.trim()    || null;
+    const address = rawAddress?.trim() || null;
+    if (!name)    return res.status(422).json({ error: 'name is required.' });
+    if (!address) return res.status(422).json({ error: 'address is required.' });
 
     // Verify city exists before creating store — gives a clean 404 instead of Prisma FK error
     const city = await prisma.city.findUnique({ where: { id: cityId } });
@@ -98,7 +98,9 @@ async function create(req, res, next) {
       data: { name, description, address, lat, lng,
               phone: phone?.trim() || null,
               website: website?.trim() || null,
-              imageUrl, videoUrl, videoThumbnailUrl, cityId },
+              imageUrl, videoUrl, videoThumbnailUrl,
+              videoDuration: videoDuration || null,
+              cityId },
     });
     // Trigger translation in background — don't block the response
     translateStoreById(store.id).catch(() => {});
@@ -110,12 +112,12 @@ async function update(req, res, next) {
   try {
     const {
       name, description, address, lat, lng,
-      phone, website, imageUrl, videoUrl, videoThumbnailUrl,
+      phone, website, imageUrl, videoUrl, videoThumbnailUrl, videoDuration,
     } = req.body;
     const data = {};
-    if (name              !== undefined) data.name              = name;
-    if (description       !== undefined) data.description       = description;
-    if (address           !== undefined) data.address           = address;
+    if (name    !== undefined) data.name    = typeof name    === 'string' ? name.trim()    : name;
+    if (description !== undefined) data.description = description;
+    if (address !== undefined) data.address = typeof address === 'string' ? address.trim() : address;
     if (lat               !== undefined) data.lat               = lat;
     if (lng               !== undefined) data.lng               = lng;
     if (phone             !== undefined) data.phone             = phone?.trim() || null;
@@ -123,6 +125,7 @@ async function update(req, res, next) {
     if (imageUrl          !== undefined) data.imageUrl          = imageUrl;
     if (videoUrl          !== undefined) data.videoUrl          = videoUrl;
     if (videoThumbnailUrl !== undefined) data.videoThumbnailUrl = videoThumbnailUrl;
+    if (videoDuration     !== undefined) data.videoDuration     = videoDuration || null;
 
     // Fetch current store — also checks existence before wasting update query on invalid ID
     const existing = await prisma.store.findUnique({
@@ -153,10 +156,10 @@ async function update(req, res, next) {
     });
 
     // Re-translate only if value actually changed — avoids overwriting manual corrections
-    const nameChanged        = name        !== undefined && name        !== existing.name;
+    // Store names are proper nouns — not translated.
+    // Only re-translate description if it actually changed.
     const descriptionChanged = description !== undefined && description !== existing.description;
-    // Re-translate fire-and-forget — translation completes after response, no re-fetch needed
-    if (nameChanged || descriptionChanged) translateStoreById(store.id, true).catch(() => {});
+    if (descriptionChanged) translateStoreById(store.id, true).catch(() => {});
 
     res.json(store);
   } catch (err) { next(err); }

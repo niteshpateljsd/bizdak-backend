@@ -18,11 +18,12 @@ const imageStorage = new CloudinaryStorage({
   cloudinary,
   params: async (req) => ({
     folder:          req.uploadFolder || 'bizdak',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
     transformation: [
       { width: 1200, height: 800, crop: 'limit' },
       { quality: 'auto:good' },
       { fetch_format: 'auto' },
+      { angle: 'exif' },   // auto-rotate based on EXIF orientation (phone photos)
     ],
   }),
 });
@@ -60,6 +61,13 @@ const uploadImage = multer({
   fileFilter: (req, file, cb) => {
     if (!file.mimetype.startsWith('image/')) {
       return cb(new Error('Only image files are allowed.'));
+    }
+    // HEIC/HEIF (iPhone native format) is not supported by Cloudinary on free tier
+    // Reject early with a clear message rather than letting Cloudinary fail silently
+    if (file.mimetype === 'image/heic' || file.mimetype === 'image/heif' ||
+        file.originalname?.toLowerCase().endsWith('.heic') ||
+        file.originalname?.toLowerCase().endsWith('.heif')) {
+      return cb(new Error('HEIC/HEIF images are not supported. Please convert to JPEG or PNG first.'));
     }
     cb(null, true);
   },
@@ -119,12 +127,34 @@ function extractPublicId(url) {
     const parts = url.split('/upload/');
     if (parts.length < 2) return null;
     let path = parts[1];
-    // Strip any leading transformation segments (e.g. w_800/h_600/) before version or folder
-    // Cloudinary transformation segments contain letters+digits+underscore separated by commas
-    // Version segment is v followed by digits: v1234567890
-    // Strip everything up to and including the version token if present
-    path = path.replace(/^(?:[^/]+\/)*?(v\d+\/)?/, (_, ver) => ver || '');
-    // Strip file extension
+
+    // Strip Cloudinary transformation segments from the start of the path.
+    // Transformation segments contain commas (e.g. w_1200,f_auto,q_auto) and
+    // are separated from the asset path by a forward slash.
+    // We must strip these before extracting the publicId, otherwise deleteAsset()
+    // passes an invalid publicId and the Cloudinary asset leaks (never deleted).
+    //
+    // Examples:
+    //   w_1200,f_auto,q_auto/bizdak/stores/abc  → bizdak/stores/abc
+    //   v1234567890/bizdak/deals/xyz             → bizdak/deals/xyz
+    //   bizdak/stores/abc                        → bizdak/stores/abc (unchanged)
+    //
+    // Strategy: split on '/', drop any leading segment that looks like a
+    // transformation (contains a comma) or a version token (v + digits only).
+    const segments = path.split('/');
+    while (segments.length > 1) {
+      const first = segments[0];
+      const isTransformation = first.includes(',');          // e.g. w_1200,f_auto
+      const isVersion        = /^v\d+$/.test(first);        // e.g. v1234567890
+      if (isTransformation || isVersion) {
+        segments.shift();
+      } else {
+        break;
+      }
+    }
+    path = segments.join('/');
+
+    // Strip file extension (.jpg, .png, .webp, .mp4, etc.)
     path = path.replace(/\.[^.]+$/, '');
     return path || null;
   } catch { return null; }

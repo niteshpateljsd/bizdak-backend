@@ -95,13 +95,30 @@ async function topStores(req, res, next) {
 
 async function campaignStats(req, res, next) {
   try {
-    const where = {};
-    if (req.query.cityId) where.cityId = req.query.cityId;
+    // Campaign/store/deal models use cityId — Event model uses citySlug
+    // Resolve cityId → citySlug once to avoid spreading the wrong field
+    const campaignWhere = {};
+    const eventWhere   = {};
+
+    if (req.query.cityId) {
+      campaignWhere.cityId = req.query.cityId;
+      // Look up the slug so we can filter events correctly
+      const city = await prisma.city.findUnique({
+        where: { id: req.query.cityId },
+        select: { slug: true },
+      });
+      if (city?.slug) eventWhere.citySlug = city.slug;
+    }
+
+    // Tap counts are scoped to the last 90 days by default — prevents all-time counts
+    // swamping recent campaign comparisons. Use ?days=N to override (max 365).
+    const tapDays  = Math.min(365, Math.max(1, parseInt(req.query.days || 90, 10)));
+    const tapSince = new Date(Date.now() - tapDays * 24 * 60 * 60 * 1000);
 
     const [campaigns, tapRows] = await Promise.all([
       prisma.campaign.findMany({
-        where,
-        take: 100,
+        where: campaignWhere,
+        take: 500,
         select: {
           id: true,
           title: true,
@@ -120,10 +137,15 @@ async function campaignStats(req, res, next) {
         },
         orderBy: { createdAt: 'desc' },
       }),
-      // Count notification_tap events grouped by campaignId — scoped to the selected date window
+      // Count notification_tap events grouped by campaignId — scoped to tapSince window
       prisma.event.groupBy({
         by: ['campaignId'],
-        where: { ...where, type: 'notification_tap', campaignId: { not: null } },
+        where: {
+          ...eventWhere,
+          type: 'notification_tap',
+          campaignId: { not: null },
+          timestamp: { gte: tapSince },
+        },
         _count: { id: true },
       }),
     ]);

@@ -104,7 +104,7 @@ async function main() {
   });
 
   console.log(`Seeded:
-  - Cities: Dakar, Abidjan
+  - Cities: Dakar, Houston, Cape Town
   - Tags: ${tags.map((t) => t.name).join(', ')}
   - Stores: Marché Sandaga, Chez Fatou Resto
   - Deals: 2 active deals`);

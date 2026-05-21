@@ -1,5 +1,16 @@
 require('dotenv').config();
 
+// ── Sentry — must be initialised before any other require ────────
+const Sentry = require('@sentry/node');
+Sentry.init({
+  dsn: process.env.SENTRY_DSN || '',  // set SENTRY_DSN on Render
+  environment:       process.env.NODE_ENV || 'development',
+  tracesSampleRate:  0.1,   // 10% of requests traced — free tier friendly
+  // Ignore expected operational errors that are not bugs
+  ignoreErrors: ['Not found', 'Unauthorized'],
+});
+
+
 // Validate critical env vars before anything else loads
 if (!process.env.DATABASE_URL) {
   console.error('[FATAL] DATABASE_URL env var is not set. Server cannot start.');

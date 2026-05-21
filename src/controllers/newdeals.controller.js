@@ -43,9 +43,9 @@ async function getNewDeals(req, res, next) {
       select: {
         id: true,
         title: true,
-        titleFr: true,
+        titleFr: true, // used by NotificationService for French proximity notification body
         discountPercent: true,
-        imageUrl: true,
+        imageUrl: true, // used by NotificationService to show deal image in proximity notifications
         createdAt: true,
         tags: { select: { tag: { select: { name: true, slug: true } } } },
       },
@@ -61,9 +61,9 @@ async function getNewDeals(req, res, next) {
       deals: deals.map((d) => ({
         id: d.id,
         title: d.title,
-        titleFr: d.titleFr,
+        titleFr: d.titleFr || null,
         discountPercent: d.discountPercent,
-        imageUrl: d.imageUrl || null,  // used by NotificationService for notification image
+        imageUrl: d.imageUrl || null,
         tags: d.tags.map((dt) => dt.tag),
       })),
     });
